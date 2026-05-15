@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FlowBoard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+    h1 { font-size: 2rem; color: #38bdf8; margin-bottom: 1.5rem; }
+    .auth-box, .task-box { background: #1e293b; padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; max-width: 600px; }
+    input { width: 100%; padding: 0.6rem; margin: 0.4rem 0 0.8rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
+    button { padding: 0.6rem 1.2rem; border-radius: 8px; border: none; background: #38bdf8; color: #0f172a; font-weight: bold; cursor: pointer; margin-right: 0.5rem; }
+    button:hover { background: #7dd3fc; }
+    .task-item { display: flex; justify-content: space-between; align-items: center; background: #0f172a; border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 0.6rem; }
+    .task-item.done span { text-decoration: line-through; color: #64748b; }
+    .badge { font-size: 0.75rem; background: #334155; padding: 2px 8px; border-radius: 20px; margin-left: 8px; }
+    #status { color: #4ade80; font-size: 0.85rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>⚡ FlowBoard</h1>
+  <div id="status">🔴 Not connected</div>
+
+  <div class="auth-box" id="authBox">
+    <h2>Login / Register</h2>
+    <input id="username" placeholder="Username" />
+    <input id="password" type="password" placeholder="Password" />
+    <button onclick="register()">Register</button>
+    <button onclick="login()">Login</button>
+  </div>
+
+  <div class="task-box" id="taskBox" style="display:none">
+    <h2>My Tasks</h2>
+    <input id="taskTitle" placeholder="Task title" />
+    <input id="taskDesc" placeholder="Description (optional)" />
+    <button onclick="addTask()">+ Add Task</button>
+    <hr style="border-color:#334155; margin: 1rem 0;" />
+    <div id="taskList"></div>
+  </div>
+
+  <script>
+    let token = "";
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onopen = () => document.getElementById("status").textContent = "🟢 Live — real-time sync active";
+    ws.onmessage = () => loadTasks();
+
+    async function api(path, method = "GET", body = null) {
+      const res = await fetch(path, {
+        method,
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: body ? JSON.stringify(body) : null
+      });
+      return res.json();
+    }
+
+    async function register() {
+      const u = document.getElementById("username").value;
+      const p = document.getElementById("password").value;
+      const res = await api("/auth/register", "POST", { username: u, password: p });
+      alert(res.username ? `Registered as ${res.username}! Now login.` : res.detail);
+    }
+
+    async function login() {
+      const u = document.getElementById("username").value;
+      const p = document.getElementById("password").value;
+      const res = await api("/auth/login", "POST", { username: u, password: p });
+      if (res.access_token) {
+        token = res.access_token;
+        document.getElementById("authBox").style.display = "none";
+        document.getElementById("taskBox").style.display = "block";
+        loadTasks();
+      } else {
+        alert(res.detail);
+      }
+    }
+
+    async function loadTasks() {
+      const tasks = await api("/tasks/");
+      const list = document.getElementById("taskList");
+      list.innerHTML = tasks.map(t => `
+        <div class="task-item ${t.completed ? 'done' : ''}">
+          <span>${t.title} <span class="badge">${t.completed ? '✅ done' : '🔄 pending'}</span></span>
+          <div>
+            ${!t.completed ? `<button onclick="completeTask(${t.id})">✓</button>` : ""}
+            <button onclick="deleteTask(${t.id})" style="background:#f87171">✕</button>
+          </div>
+        </div>`).join("");
+    }
+
+    async function addTask() {
+      const title = document.getElementById("taskTitle").value;
+      const description = document.getElementById("taskDesc").value;
+      if (!title) return alert("Title required");
+      await api("/tasks/", "POST", { title, description });
+      ws.send("new_task");
+      document.getElementById("taskTitle").value = "";
+      document.getElementById("taskDesc").value = "";
+    }
+
+    async function completeTask(id) {
+      await api(`/tasks/${id}`, "PATCH", { completed: true });
+      ws.send("task_updated");
+    }
+
+    async function deleteTask(id) {
+      await api(`/tasks/${id}`, "DELETE");
+      ws.send("task_deleted");
+    }
+  </script>
+</body>
+</html>
